@@ -1,0 +1,77 @@
+# Tutorial for GWAS with SLEMM
+# Gabor Meszaros, Genomics Boot Camp, https://www.youtube.com/@GenomicsBootCamp
+# Software link: https://github.com/jiang18/slemm
+
+
+##########
+# Prepare files
+##########
+
+# 0) Make the programs executable in Linux
+chmod +x slemm
+chmod +x plink
+chmod +x plink2
+
+# 1) Preapre genotype file 
+# must be in binary ped format, use --make-bed PLINK option if in other formats
+# do an appropriate quality control (not shown here, already done for this data)  
+
+# 2) Preapre pgen genotype file w PLINK2
+# works only with PLINK 2, and *not* with PLINK 1.9
+# download PLINK 2 executable if necessary from https://www.cog-genomics.org/plink/2.0/
+# to create pgen file, run:
+./plink2 --bfile GWASdata --cow --make-pgen --out GWASdata_PLINK2
+
+# 3) Prepare SNP info data
+# single column file with SNP names  (column name: "SNP")
+# easiest in R, using the data after QC, as:
+#
+ library(tidyverse)
+ read_table("GWASdata.bim", col_names = F) %>% 
+   select(SNP = X2) %>% 
+   write_delim("snp_info.csv", delim = ",")^^
+
+# 4) Prepare phenotype data
+# should be a comma delimited file
+# first column: identification numbers of individuals (column name: "pid")
+# second (and other columns): phenotype values (column name: name of the phenotype)
+
+
+
+##########
+# GWAS with SLEMM
+##########
+# stage 1 - run SLEMM GWAS
+./slemm --lmm --phenotype_file pheno.csv --trait phenotypeName --bfile GWASdata --snp_info_file snp_info.csv --out resultsStage1Slemm --num_threads 10
+
+
+# stage 2 - run GWAS extraction
+export OMP_NUM_THREADS=10
+for i in `seq 1 29`; do python3 slemm_gwa.py --pfile GWASdata_PLINK2 --slemm resultsStage1Slemm --out resultsStage2Slemm.chr$i.txt --chr $i; done
+
+
+# stage 3 - summarize GWAS results
+mv resultsStage2Slemm.chr1.txt results_PhenotypeName.chrAll.txt
+for i in `seq 2 29`; do tail -n +2 resultsStage2Slemm.chr$i.txt >> results_PhenotypeName.chrAll.txt; rm resultsStage2Slemm.chr$i.txt; done
+
+
+#########################
+# Plot results - in R
+#########################
+
+# Note: from the results file manually remove the "#" character from the first line
+
+# load packages
+library(tidyverse)
+library(qqman)
+# read SLEMM results
+slemmResults <- read_table("results_PhenotypeName.chrAll.txt")
+
+
+#compute Bonferroni threshold
+bonferroni <- -log10(0.05/nrow(slemmResults))
+
+#plot GWAS results
+png("GWAS_SLEMM_manhattanPlot.png")
+manhattan(slemmResults, chr = "CHROM", bp = "POS", p = "P", snp = "ID", genomewideline = bonferroni, suggestiveline = F)
+dev.off()
